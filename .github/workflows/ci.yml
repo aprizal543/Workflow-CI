@@ -1,0 +1,111 @@
+name: MLOps Pipeline (kreteria 3 advanced)
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  mlops:
+    runs-on: ubuntu-latest
+
+    steps:
+    # Checkout Repository
+    - name: Checkout Repository
+      uses: actions/checkout@v3
+
+    # Setup Python
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12.7'
+
+    # Install Dependencies
+    - name: Install Dependencies
+      run: |
+        pip install --upgrade pip
+        pip install mlflow[extras]
+        pip install scikit-learn pandas numpy matplotlib
+    
+    # Clean Folder mlruns (sebelum run MLProject)
+    - name: Clean old mlflow runs
+      run: rm -rf MLProject/mlruns
+
+    # Run MLflow Project (Training)
+    - name: Run MLflow Project
+      working-directory: MLProject
+      run: |
+        mlflow run . --env-manager=local
+
+    # GET RUN_ID
+    - name: Get Run ID
+      working-directory: MLProject
+      run: |
+        RUN_ID=$(ls -td mlruns/0/*/ | grep -Eo '[0-9a-f]{32}' | head -1)
+        echo "run_id=$RUN_ID" >> $GITHUB_ENV
+        echo "Run ID: $RUN_ID"
+
+    # GET MODEL_ID
+    - name: Get Model ID
+      id: get_model_id
+      run: |
+        MODEL_ID=$(ls MLProject/mlruns/0/models | head -1)
+        echo "model_id=$MODEL_ID" >> $GITHUB_ENV
+        echo "Model ID: $MODEL_ID"
+
+    # Upload Artifact Model
+    - name: Upload Artifact Model
+      uses: actions/upload-artifact@v4
+      with:
+        name: trained-model-artifact
+        path: MLProject/mlruns/0/models/${{ env.model_id }}/artifacts
+    
+    # Upload Artifact Dataset (train & test)
+    - name: Upload Artifact Dataset
+      uses: actions/upload-artifact@v4
+      with:
+        name: dataset-artifacts
+        path: |
+          MLProject/mlruns/0/${{ env.run_id }}/artifacts/dataset_train.csv
+          MLProject/mlruns/0/${{ env.run_id }}/artifacts/dataset_test.csv
+    
+    # Upload Artifact Feature Importance
+    - name: Upload Artifact Feature Importance
+      uses: actions/upload-artifact@v4
+      with:
+        name: feature-importance-artifact
+        path: MLProject/mlruns/0/${{ env.run_id }}/artifacts/feature_importance.csv
+    
+    # Upload Artifact Confusion Matrix
+    - name: Upload Artifact Confusion Matrix
+      uses: actions/upload-artifact@v4
+      with:
+        name: confusion-matrix-artifact
+        path: |
+          MLProject/mlruns/0/${{ env.run_id }}/artifacts/confusion_matrix_training.png
+          MLProject/mlruns/0/${{ env.run_id }}/artifacts/confusion_matrix_testing.png
+
+    # Docker Setup
+    - name: Setup Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Login Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+    # Build Docker Image from Model
+    - name: Build Docker Image from MLflow Model
+      run: |
+        mlflow models build-docker \
+          -m "MLProject/mlruns/0/models/${{ env.model_id }}/artifacts" \
+          -n "${{ secrets.DOCKERHUB_USERNAME }}/obesity-classification:latest"
+    
+    # Push Docker Image
+    - name: Push Docker Image
+      run: |
+        docker push ${{ secrets.DOCKERHUB_USERNAME }}/obesity-classification:latest
+
+    - name: Completed
+      run: echo "Pipeline complete!"
