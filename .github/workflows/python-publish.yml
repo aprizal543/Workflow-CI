@@ -1,0 +1,180 @@
+# This workflow will upload a Python Package to PyPI when a release is created
+# For more information see: httpname: MLOps Pipeline (kreteria 3 advanced)
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  mlops:
+    runs-on: ubuntu-latest
+
+    steps:
+    # Checkout Repository
+    - name: Checkout Repository
+      uses: actions/checkout@v3
+
+    # Setup Python
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12.7'
+
+    # Install Dependencies
+    - name: Install Dependencies
+      run: |
+        pip install --upgrade pip
+        pip install mlflow[extras]
+        pip install scikit-learn pandas numpy matplotlib
+    
+    # Clean Folder mlruns (sebelum run MLProject)
+    - name: Clean old mlflow runs
+      run: rm -rf MLProject/mlruns
+
+    # Run MLflow Project (Training)
+    - name: Run MLflow Project
+      working-directory: MLProject
+      run: |
+        mlflow run . --env-manager=local
+
+    # GET RUN_ID
+    - name: Get Run ID
+      working-directory: MLProject
+      run: |
+        RUN_ID=$(ls -td mlruns/0/*/ | grep -Eo '[0-9a-f]{32}' | head -1)
+        echo "run_id=$RUN_ID" >> $GITHUB_ENV
+        echo "Run ID: $RUN_ID"
+
+    # GET MODEL_ID
+    - name: Get Model ID
+      id: get_model_id
+      run: |
+        MODEL_ID=$(ls MLProject/mlruns/0/models | head -1)
+        echo "model_id=$MODEL_ID" >> $GITHUB_ENV
+        echo "Model ID: $MODEL_ID"
+
+    # Upload Artifact Model
+    - name: Upload Artifact Model
+      uses: actions/upload-artifact@v4
+      with:
+        name: trained-model-artifact
+        path: MLProject/mlruns/0/models/${{ env.model_id }}/artifacts
+    
+    # Upload Artifact Dataset (train & test)
+    - name: Upload Artifact Dataset
+      uses: actions/upload-artifact@v4
+      with:
+        name: dataset-artifacts
+        path: |
+          MLProject/mlruns/0/${{ env.run_id }}/artifacts/dataset_train.csv
+          MLProject/mlruns/0/${{ env.run_id }}/artifacts/dataset_test.csv
+    
+    # Upload Artifact Feature Importance
+    - name: Upload Artifact Feature Importance
+      uses: actions/upload-artifact@v4
+      with:
+        name: feature-importance-artifact
+        path: MLProject/mlruns/0/${{ env.run_id }}/artifacts/feature_importance.csv
+    
+    # Upload Artifact Confusion Matrix
+    - name: Upload Artifact Confusion Matrix
+      uses: actions/upload-artifact@v4
+      with:
+        name: confusion-matrix-artifact
+        path: |
+          MLProject/mlruns/0/${{ env.run_id }}/artifacts/confusion_matrix_training.png
+          MLProject/mlruns/0/${{ env.run_id }}/artifacts/confusion_matrix_testing.png
+
+    # Docker Setup
+    - name: Setup Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Login Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+    # Build Docker Image from Model
+    - name: Build Docker Image from MLflow Model
+      run: |
+        mlflow models build-docker \
+          -m "MLProject/mlruns/0/models/${{ env.model_id }}/artifacts" \
+          -n "${{ secrets.DOCKERHUB_USERNAME }}/obesity-classification:latest"
+    
+    # Push Docker Image
+    - name: Push Docker Image
+      run: |
+        docker push ${{ secrets.DOCKERHUB_USERNAME }}/obesity-classification:latest
+
+    - name: Completed
+      run: echo "Pipeline complete!"s://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python#publishing-to-package-registries
+
+# This workflow uses actions that are not certified by GitHub.
+# They are provided by a third-party and are governed by
+# separate terms of service, privacy policy, and support
+# documentation.
+
+name: Upload Python Package
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  release-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Build release distributions
+        run: |
+          # NOTE: put your own distribution build steps here.
+          python -m pip install build
+          python -m build
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dists
+          path: dist/
+
+  pypi-publish:
+    runs-on: ubuntu-latest
+    needs:
+      - release-build
+    permissions:
+      # IMPORTANT: this permission is mandatory for trusted publishing
+      id-token: write
+
+    # Dedicated environments with protections for publishing are strongly recommended.
+    # For more information, see: https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment#deployment-protection-rules
+    environment:
+      name: pypi
+      # OPTIONAL: uncomment and update to include your PyPI project URL in the deployment status:
+      # url: https://pypi.org/p/YOURPROJECT
+      #
+      # ALTERNATIVE: if your GitHub Release name is the PyPI project version string
+      # ALTERNATIVE: exactly, uncomment the following line instead:
+      # url: https://pypi.org/project/YOURPROJECT/${{ github.event.release.name }}
+
+    steps:
+      - name: Retrieve release distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: release-dists
+          path: dist/
+
+      - name: Publish release distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
