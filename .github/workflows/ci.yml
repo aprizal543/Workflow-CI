@@ -39,10 +39,9 @@ jobs:
 
     # GET RUN_ID
     - name: Get Run ID
-      id: get_run_id
       working-directory: MLProject
       run: |
-        RUN_ID=$(ls -td mlruns/0/*/ | grep -v "models" | grep -Eo '[0-9a-f]{32}' | head -1)
+        RUN_ID=$(ls -td mlruns/0/*/ | grep -Eo '[0-9a-f]{32}' | head -1)
         echo "run_id=$RUN_ID" >> $GITHUB_ENV
         echo "Run ID: $RUN_ID"
 
@@ -50,10 +49,7 @@ jobs:
     - name: Get Model ID
       id: get_model_id
       run: |
-        MODEL_ID=$(ls -t MLProject/mlruns/0/*/artifacts/model 2>/dev/null | head -1 | grep -Eo '[0-9a-f]{32}')
-        if [ -z "$MODEL_ID" ]; then
-          MODEL_ID=$(ls -td MLProject/mlruns/0/*/ | grep -v "models" | grep -Eo '[0-9a-f]{32}' | head -1)
-        fi
+        MODEL_ID=$(ls MLProject/mlruns/0/models | head -1)
         echo "model_id=$MODEL_ID" >> $GITHUB_ENV
         echo "Model ID: $MODEL_ID"
 
@@ -62,7 +58,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: trained-model-artifact
-        path: MLProject/mlruns/0/${{ env.model_id }}/artifacts/model
+        path: MLProject/mlruns/0/models/${{ env.model_id }}/artifacts
     
     # Upload Artifact Dataset (train & test)
     - name: Upload Artifact Dataset
@@ -103,7 +99,7 @@ jobs:
     - name: Build Docker Image from MLflow Model
       run: |
         mlflow models build-docker \
-          -m "MLProject/mlruns/0/${{ env.model_id }}/artifacts/model" \
+          -m "MLProject/mlruns/0/models/${{ env.model_id }}/artifacts" \
           -n "${{ secrets.DOCKERHUB_USERNAME }}/obesity-classification:latest"
     
     # Push Docker Image
